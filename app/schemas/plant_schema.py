@@ -20,7 +20,7 @@ class IdentificationResponse(BaseModel):
 
 # 2. Request sent by Frontend after the user picks the plant & fills out height/pot info
 class ConfirmPlantRequest(BaseModel):
-    user_id: str
+    user_id: Optional[str] = None  # No longer required from frontend!
     selected_species_id: str
     nickname: Optional[str] = None
     height_cm: float

@@ -5,9 +5,17 @@ import torch.nn as nn
 import torchvision.transforms as transforms
 from torchvision.models import mobilenet_v3_large, MobileNet_V3_Large_Weights
 from PIL import Image
+import json
+import numpy as np
+import onnxruntime as ort
 
 # Dictionary holding your global loaded model
 ml_models = {}
+vision_state = {
+    "species_session": None,
+    "species_labels": {}
+}
+
 
 # Must match the exact index order your model was trained on
 CLASS_MAPPING = {
@@ -79,3 +87,61 @@ def predict_plant_species(image_bytes: bytes, model: nn.Module) -> dict:
         return {"status": "confirmed", "candidates": [candidates[0]]}
     else:
         return {"status": "ambiguous", "candidates": candidates}
+
+
+def init_species_model(
+        onnx_path: str = "ml_weights/species_mobilenetv3.onnx",
+        labels_path: str = "ml_weights/species_labels.json"
+):
+    if not os.path.exists(onnx_path) or not os.path.exists(labels_path):
+        print(f"WARNING: {onnx_path} not found yet. Running in fallback mode until placed in ml_weights/.")
+        return
+
+    sess_options = ort.SessionOptions()
+    sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+
+    vision_state["species_session"] = ort.InferenceSession(
+        onnx_path,
+        sess_options=sess_options,
+        providers=["CPUExecutionProvider"]
+    )
+    with open(labels_path, "r") as f:
+        vision_state["species_labels"] = json.load(f)
+    print("Model 1 (Species ONNX) loaded successfully!")
+
+
+def _softmax(x: np.ndarray) -> np.ndarray:
+    e_x = np.exp(x - np.max(x))
+    return e_x / e_x.sum(axis=-1, keepdims=True)
+
+
+def run_species_inference(image_bytes: bytes) -> list[dict]:
+    """Returns Top-3 [{species_id, confidence}] sorted highest to lowest."""
+    session = vision_state["species_session"]
+    id2label = vision_state["species_labels"]
+
+    # Fallback if .onnx file hasn't been copied into ml_weights/ yet
+    if session is None:
+        return [
+            {"species_id": "sp_calathea", "confidence": 0.52},
+            {"species_id": "sp_calathea_lanc", "confidence": 0.34},
+            {"species_id": "sp_peace_lily", "confidence": 0.14}
+        ]
+
+    # Preprocess image: Resize -> Normalize -> NCHW tensor
+    image = Image.open(io.BytesIO(image_bytes)).convert("RGB").resize((224, 224))
+    img_arr = np.array(image, dtype=np.float32) / 255.0
+    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+    std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+    img_arr = (img_arr - mean) / std
+    input_tensor = np.transpose(img_arr, (2, 0, 1))[np.newaxis, ...]
+
+    # Run ONNX inference (~10ms)
+    logits = session.run(["logits"], {"pixel_values": input_tensor})[0][0]
+    probs = _softmax(logits)
+
+    top_indices = np.argsort(probs)[::-1][:3]
+    return [
+        {"species_id": id2label[str(idx)], "confidence": round(float(probs[idx]), 4)}
+        for idx in top_indices
+    ]
