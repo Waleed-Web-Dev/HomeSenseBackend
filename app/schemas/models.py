@@ -90,3 +90,14 @@ class ConfirmPlantRequest(BaseModel):
     pot_size_inches: float
     current_room: str = "Living Room"
     temp_image_path: str
+
+class HistoryLogEntry(BaseModel):
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    event_type: str  # e.g., "PLANT_ADDED", "HEALTH_CHECKUP", "WATERED"
+    image_url: Optional[str] = None
+    condition: Optional[str] = None
+    confidence: Optional[float] = None
+    canopy_greenness_pct: Optional[float] = None
+    health_status_assigned: Optional[str] = None
+    treatment_recommended: Optional[str] = None
+    notes: Optional[str] = None
