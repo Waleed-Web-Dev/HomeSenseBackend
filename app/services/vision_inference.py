@@ -24,6 +24,40 @@ CLASS_MAPPING = {
     2: {"species_id": "sp_snake_plant", "common": "Snake Plant", "scientific": "Dracaena trifasciata"},
 }
 
+# Actionable treatment plans mapped to the 6 universal disease classes
+DISEASE_TREATMENTS = {
+    "Healthy": {
+        "severity": "none",
+        "summary": "Leaves look vibrant with no visible pathogens or stress.",
+        "treatment": "Continue standard watering and nutrition schedule."
+    },
+    "Fungal_Leaf_Spot": {
+        "severity": "moderate",
+        "summary": "Fungal leaf spots detected (likely due to excess leaf moisture or low airflow).",
+        "treatment": "Prune heavily spotted leaves with sterile scissors, avoid misting leaves, and apply copper fungicide or diluted Neem oil every 5 days."
+    },
+    "Bacterial_Spot_Blight": {
+        "severity": "high",
+        "summary": "Water-soaked bacterial lesions or blight detected.",
+        "treatment": "Isolate the plant immediately to prevent spreading. Remove infected foliage, water only at the soil base, and apply a copper-based bactericide."
+    },
+    "Leaf_Mold_Mildew": {
+        "severity": "moderate",
+        "summary": "Powdery mildew or foliar mold growth detected due to high humidity and stagnant air.",
+        "treatment": "Wipe leaves gently with a damp cloth, increase room ventilation, and spray with a potassium bicarbonate or Neem oil solution."
+    },
+    "Spider_Mites_Pest": {
+        "severity": "high",
+        "summary": "Stippling and pest damage consistent with spider mites or sap-sucking insects.",
+        "treatment": "Rinse foliage thoroughly, wipe undersides of leaves, and apply Neem oil or insecticidal soap every 3 days for two weeks."
+    },
+    "Yellowing_Nutrient_Stress": {
+        "severity": "moderate",
+        "summary": "Foliar chlorosis (yellowing) detected, indicating overwatering or nitrogen/iron deficiency.",
+        "treatment": "Check top 2 inches of soil before watering again. If soil is dry and roots are healthy, apply half-strength balanced NPK fertilizer on the next cycle."
+    }
+}
+
 CONFIDENCE_THRESHOLD = 0.75
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -145,3 +179,78 @@ def run_species_inference(image_bytes: bytes) -> list[dict]:
         {"species_id": id2label[str(idx)], "confidence": round(float(probs[idx]), 4)}
         for idx in top_indices
     ]
+
+def load_onnx_bundle(onnx_path: str, labels_path: str) -> dict:
+    """Loads an ONNX Runtime session and its corresponding JSON label map."""
+    sess_options = ort.SessionOptions()
+    sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    session = ort.InferenceSession(
+        onnx_path,
+        sess_options=sess_options,
+        providers=["CPUExecutionProvider"]
+    )
+    with open(labels_path, "r") as f:
+        id2label = json.load(f)
+    return {"session": session, "id2label": id2label}
+
+def softmax(x: np.ndarray) -> np.ndarray:
+    e_x = np.exp(x - np.max(x))
+    return e_x / e_x.sum(axis=-1, keepdims=True)
+
+def preprocess_image(image_bytes: bytes) -> tuple[np.ndarray, float]:
+    """Preprocesses image for MobileNetV3 ONNX and computes canopy greenness ratio."""
+    image = Image.open(io.BytesIO(image_bytes)).convert("RGB").resize((224, 224))
+    img_array = np.array(image, dtype=np.float32) / 255.0
+
+    # Calculate Canopy Greenness Ratio (G > R and G > B pixels)
+    r, g, b = img_array[:, :, 0], img_array[:, :, 1], img_array[:, :, 2]
+    green_mask = (g > r * 1.05) & (g > b * 1.05) & (g > 0.15)
+    greenness_score = round(float(np.mean(green_mask)) * 100, 1)
+
+    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+    std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+    norm_array = (img_array - mean) / std
+    tensor = np.transpose(norm_array, (2, 0, 1))[np.newaxis, ...]
+    return tensor, greenness_score
+
+
+def disease_inference(image_bytes: bytes, species_id_or_bundle=None) -> dict:
+    """
+    Runs ONNX inference for leaf disease detection.
+    Works whether passed (image_bytes, plant.species_id) or (image_bytes, bundle).
+    """
+    # Grab the loaded ONNX bundle from ml_models if a species_id string was passed
+    if isinstance(species_id_or_bundle, dict) and "session" in species_id_or_bundle:
+        bundle = species_id_or_bundle
+    else:
+        bundle = ml_models.get("disease")
+        if not bundle:
+            raise RuntimeError("Disease ONNX model is not loaded in ml_models['disease'].")
+
+    session = bundle["session"]
+    id2label = bundle["id2label"]
+
+    input_tensor, greenness_score = preprocess_image(image_bytes)
+    logits = session.run(["logits"], {"pixel_values": input_tensor})[0][0]
+    probs = softmax(logits)
+
+    top_idx = int(np.argmax(probs))
+    confidence = round(float(probs[top_idx]), 4)
+    raw_condition = id2label[str(top_idx)]
+
+    is_healthy = raw_condition == "Healthy"
+    guide = DISEASE_TREATMENTS.get(raw_condition, DISEASE_TREATMENTS["Healthy"])
+
+    # Combine summary + treatment into 'advice' so /diagnose and Flutter receive a complete message
+    combined_advice = f"{guide['summary']} {guide['treatment']}".strip()
+
+    return {
+        "healthy": is_healthy,
+        "condition": raw_condition.replace("_", " "),
+        "confidence": confidence,
+        "advice": combined_advice,
+        "canopy_greenness_pct": greenness_score,
+        "severity": guide["severity"],
+        "summary": guide["summary"],
+        "treatment_plan": guide["treatment"],
+    }

@@ -9,11 +9,15 @@ class CandidatePlant(BaseModel):
     common_name: str
     scientific_name: str
     confidence: float
+    light: str = "3-4 hrs bright indirect light"
+    water: str = "Every 7 days"
+    humidity: str = "Moderate (40-50%)"
+    is_toxic_to_pets: bool = False
+    toxic_note: str = ""
     required_user_inputs: List[str] = ["height_cm", "pot_size_inches"]
 
-
 class IdentificationResponse(BaseModel):
-    status: str  # "confirmed" (high confidence) or "ambiguous" (user must choose)
+    status: str  # "confirmed" or "ambiguous"
     temp_image_path: str
     candidates: List[CandidatePlant]
 
@@ -58,3 +62,14 @@ class UserPlantDocument(BaseModel):
     # Embedded History Array
     history_logs: List[Dict[str, Any]] = []
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    class HistoryLogEntry(BaseModel):
+        timestamp: datetime = Field(default_factory=datetime.utcnow)
+        event_type: str  # e.g., "PLANT_ADDED", "HEALTH_CHECKUP", "WATERED"
+        image_url: Optional[str] = None
+        condition: Optional[str] = None
+        confidence: Optional[float] = None
+        canopy_greenness_pct: Optional[float] = None
+        health_status_assigned: Optional[str] = None
+        treatment_recommended: Optional[str] = None
+        notes: Optional[str] = None

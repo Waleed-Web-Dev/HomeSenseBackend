@@ -1,9 +1,9 @@
 from typing import Optional
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from beanie import PydanticObjectId
 
 class UserCreate(BaseModel):
-    full_name: str
+    full_name: str = Field(..., min_length=1, strip_whitespace=True)
     email: EmailStr
     password: str
     gps_lat: Optional[float] = None
