@@ -11,6 +11,7 @@ from app.schemas.models import (
     ConfirmPlantRequest
 )
 from app.services.vision_inference import run_species_inference, CONFIDENCE_THRESHOLD
+from app.services.disease_inference import disease_inference
 from app.security import get_current_user
 from app.schemas.models import User
 from fastapi import Depends
@@ -163,3 +164,89 @@ async def get_single_plant(
         raise HTTPException(status_code=404, detail="Plant not found in your inventory.")
 
     return plant
+
+from datetime import datetime, timedelta
+import os
+import uuid
+from beanie import PydanticObjectId
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
+from pydantic import BaseModel
+
+# Adjust imports to match your project structure
+# from app.models import User, UserPlant
+# from app.security import get_current_user
+# from app.ml import disease_inference
+
+
+class DiagnosisResponse(BaseModel):
+    condition: str
+    confidence: float
+    advice: str
+    healthy: bool
+
+
+@router.post("/diagnose", response_model=DiagnosisResponse)
+async def diagnose_plant_health(
+    plant_id: str = Form(...),
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+):
+    # 1. Validate image file
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="File must be an image.")
+
+    # 2. Verify plant exists and belongs to the logged-in user
+    try:
+        plant = await UserPlant.get(PydanticObjectId(plant_id))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid plant ID format.")
+
+    if not plant or plant.user_id != str(current_user.id):
+        raise HTTPException(status_code=404, detail="Plant not found in your garden.")
+
+    # 3. Save checkup image
+    image_bytes = await file.read()
+    ext = file.filename.split(".")[-1] if "." in file.filename else "jpg"
+    checkup_path = os.path.join(UPLOAD_DIR, f"checkup_{uuid.uuid4()}.{ext}")
+    with open(checkup_path, "wb") as f:
+        f.write(image_bytes)
+
+    # 4. Run disease/health ONNX inference in threadpool
+    # Expected return format: {"condition": str, "confidence": float, "advice": str, "healthy": bool}
+    prediction = await run_in_threadpool(
+        disease_inference, image_bytes, plant.species_id
+    )
+
+    is_healthy: bool = prediction["healthy"]
+    condition: str = prediction["condition"]
+    confidence: float = round(float(prediction["confidence"]), 2)
+    advice: str = prediction["advice"]
+
+    # 5. Update plant health status, next checkup date, and history logs in MongoDB
+    now = datetime.utcnow()
+    next_days = (
+        3 if not is_healthy
+        else (7 if plant.sensitivity_level == "Sensitive" else 30)
+    )
+
+    plant.health_status = "Thriving" if is_healthy else condition
+    plant.next_checkup_date = now + timedelta(days=next_days)
+    plant.history_logs.append({
+        "timestamp": now,
+        "event_type": "HEALTH_CHECKUP",
+        "condition": condition,
+        "confidence": confidence,
+        "healthy": is_healthy,
+        "image_url": checkup_path,
+        "notes": advice,
+    })
+
+    await plant.save()
+
+    return DiagnosisResponse(
+        condition=condition,
+        confidence=confidence,
+        advice=advice,
+        healthy=is_healthy,
+    )
