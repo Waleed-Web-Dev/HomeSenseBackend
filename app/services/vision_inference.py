@@ -24,6 +24,13 @@ CLASS_MAPPING = {
     2: {"species_id": "sp_snake_plant", "common": "Snake Plant", "scientific": "Dracaena trifasciata"},
 }
 
+vision_state = {
+    "species_session": None,
+    "species_labels": {},
+    "disease_session": None,
+    "disease_labels": {},
+}
+
 # Actionable treatment plans mapped to the 6 universal disease classes
 DISEASE_TREATMENTS = {
     "Healthy": {
@@ -216,19 +223,17 @@ def preprocess_image(image_bytes: bytes) -> tuple[np.ndarray, float]:
 
 def disease_inference(image_bytes: bytes, species_id_or_bundle=None) -> dict:
     """
-    Runs ONNX inference for leaf disease detection.
+    Runs ONNX inference for leaf disease detection using vision_state.
     Works whether passed (image_bytes, plant.species_id) or (image_bytes, bundle).
     """
-    # Grab the loaded ONNX bundle from ml_models if a species_id string was passed
     if isinstance(species_id_or_bundle, dict) and "session" in species_id_or_bundle:
-        bundle = species_id_or_bundle
+        session = species_id_or_bundle["session"]
+        id2label = species_id_or_bundle["id2label"]
     else:
-        bundle = ml_models.get("disease")
-        if not bundle:
-            raise RuntimeError("Disease ONNX model is not loaded in ml_models['disease'].")
-
-    session = bundle["session"]
-    id2label = bundle["id2label"]
+        session = vision_state.get("disease_session")
+        id2label = vision_state.get("disease_labels")
+        if not session or not id2label:
+            raise RuntimeError("Disease ONNX model is not loaded in vision_state.")
 
     input_tensor, greenness_score = preprocess_image(image_bytes)
     logits = session.run(["logits"], {"pixel_values": input_tensor})[0][0]
@@ -254,3 +259,23 @@ def disease_inference(image_bytes: bytes, species_id_or_bundle=None) -> dict:
         "summary": guide["summary"],
         "treatment_plan": guide["treatment"],
     }
+
+def init_disease_model(
+    onnx_path: str = "ml_weights/disease_mobilenetv3.onnx",
+    labels_path: str = "ml_weights/disease_labels.json",
+):
+    if not os.path.exists(onnx_path) or not os.path.exists(labels_path):
+        print(f"WARNING: {onnx_path} not found yet. Disease checkups will run in fallback mode until placed in ml_weights/.")
+        return
+
+    sess_options = ort.SessionOptions()
+    sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+
+    vision_state["disease_session"] = ort.InferenceSession(
+        onnx_path,
+        sess_options=sess_options,
+        providers=["CPUExecutionProvider"],
+    )
+    with open(labels_path, "r") as f:
+        vision_state["disease_labels"] = json.load(f)
+    print("Model 2 (Disease ONNX) loaded successfully!")
