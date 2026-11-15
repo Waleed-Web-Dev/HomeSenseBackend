@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.database import init_db
 from app.routers import auth
-from app.services.vision_inference import load_plant_model, ml_models, init_species_model
+from app.services.vision_inference import load_plant_model, ml_models, init_species_model, init_disease_model
 from app.routers import plants
 
 @asynccontextmanager
@@ -11,6 +11,7 @@ async def lifespan(app: FastAPI):
     # Initialize MongoDB + Beanie models on startup
     await init_db()
     init_species_model()
+    init_disease_model()
     yield
     ml_models.clear()
     # Any cleanup logic on shutdown goes here
