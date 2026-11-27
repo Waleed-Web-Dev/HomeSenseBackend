@@ -8,10 +8,19 @@ from beanie import Document
 from pydantic import BaseModel, Field
 import pymongo
 
+class NotificationPrefs(BaseModel):
+    mute_routine_watering: bool = False
+    nutrition_reminders: bool = True
+    health_checkup_prompts: bool = True
+    recovery_mode_alerts: bool = True
+    relocation_alerts: bool = True
+
 class User(Document):
     full_name: str
     email: Indexed(EmailStr, unique=True)
     hashed_password: str
+    fcm_token: Optional[str] = None
+    notification_prefs: NotificationPrefs = Field(default_factory=NotificationPrefs)
 
     # Environmental & Safety Context
     gps_lat: Optional[float] = None
@@ -23,6 +32,9 @@ class User(Document):
 
     class Settings:
         name = "users"  # MongoDB Collection name
+
+
+
 
 
 class SpeciesCatalog(Document):
