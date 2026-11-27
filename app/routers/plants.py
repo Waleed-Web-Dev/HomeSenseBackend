@@ -22,7 +22,6 @@ router = APIRouter(prefix="/plants", tags=["Plants"])
 UPLOAD_DIR = "uploads/plants"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-
 @router.post("/upload-identify", response_model=IdentificationResponse)
 async def upload_and_identify_plant(file: UploadFile = File(...)):
     if not file.content_type or not file.content_type.startswith("image/"):
