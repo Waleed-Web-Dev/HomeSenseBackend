@@ -95,13 +95,15 @@ class IdentificationResponse(BaseModel):
     candidates: List[CandidatePlant]
 
 class ConfirmPlantRequest(BaseModel):
-    user_id: str
+    # Remove `user_id: str` since it now comes from `current_user` via JWT!
     selected_species_id: str
     nickname: Optional[str] = None
     height_cm: float
     pot_size_inches: float
-    current_room: str = "Living Room"
+    current_room: str
     temp_image_path: str
+    gps_lat: Optional[float] = None
+    gps_lon: Optional[float] = None
 
 class HistoryLogEntry(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.utcnow)
