@@ -5,6 +5,11 @@ from app.database import init_db
 from app.routers import auth
 from app.services.vision_inference import load_plant_model, ml_models, init_species_model, init_disease_model
 from app.routers import plants
+#____________________________________
+import traceback
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -22,6 +27,28 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+#________________________Error Finding_________________________________________
+# 1. Prints 422 Pydantic validation errors (e.g., missing or wrong field types)
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    print(f"\n❌ [422 VALIDATION ERROR] {request.method} {request.url}")
+    print(f"Details: {exc.errors()}")
+    print(f"Body received: {exc.body}\n")
+    return JSONResponse(status_code=422, content={"detail": exc.errors()})
+
+# 2. Prints HTTPExceptions like 404 ("Selected species not found in catalog") or 401
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    print(f"\n⚠️ [HTTP {exc.status_code}] {request.method} {request.url} -> {exc.detail}\n")
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+# 3. Prints full traceback for 500 Internal Server Errors (e.g., Beanie/MongoDB crash)
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    print(f"\n🔥 [500 SERVER CRASH] {request.method} {request.url}")
+    traceback.print_exc()
+    return JSONResponse(status_code=500, content={"detail": str(exc)})
+#_______________________________________________________________________________________
 
 # Enable CORS for Flutter / React Native frontend
 app.add_middleware(

@@ -30,7 +30,7 @@ async def upload_and_identify_plant(file: UploadFile = File(...)):
 
     image_bytes = await file.read()
     ext = file.filename.split(".")[-1] if file.filename and "." in file.filename else "jpg"
-    temp_path = os.path.join(UPLOAD_DIR, f"{uuid.uuid4()}.{ext}")
+    temp_path = os.path.join(UPLOAD_DIR, f"{uuid.uuid4()}.{ext}").replace("\\", "/")
     with open(temp_path, "wb") as f:
         f.write(image_bytes)
 
@@ -140,7 +140,7 @@ async def confirm_and_add_plant(
         nickname=payload.nickname or species_info.common_name,
         height_cm=payload.height_cm,
         pot_size_inches=payload.pot_size_inches,
-        image_url=payload.temp_image_path,
+        image_url=payload.temp_image_path.replace("\\", "/"),
         sensitivity_level=species_info.sensitivity_level,
         is_toxic_to_pets=species_info.is_toxic_to_pets,
         ideal_sunlight_hours=species_info.ideal_sunlight_hours,
